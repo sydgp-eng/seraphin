@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langchain_chroma import Chroma  # pip install langchain-chroma
 
