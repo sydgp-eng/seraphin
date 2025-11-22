@@ -8,9 +8,6 @@ langchain-community
 # Groq LLM integration
 langchain-groq
 
-# HuggingFace embeddings
-langchain-huggingface
-
 # Chroma vector store
 langchain-chroma
 chromadb
