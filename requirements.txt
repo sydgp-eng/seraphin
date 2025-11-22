@@ -18,6 +18,10 @@ python-dotenv
 # PDF loading (used in ingest.py)
 pypdf
 
+# Hugging Face embeddings dependencies
+sentence-transformers
+huggingface-hub
+
 # (Optional) FastAPI + uvicorn if you still use api.py locally
 fastapi
 uvicorn[standard]
