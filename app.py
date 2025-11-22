@@ -1,4 +1,4 @@
-# app.py  – minimal SERA DV assistant UI
+# app.py – SERAPHIN (SERA DV Assistant UI)
 
 import os
 from typing import List
@@ -18,9 +18,9 @@ MODEL_NAME = "llama-3.1-8b-instant"
 TEMPERATURE = 0.1
 
 SYSTEM_PROMPT = """
-You are a calm, trauma-informed assistant that gives
-GENERAL INFORMATION (not legal advice) about domestic violence
-processes and support options in Georgia, USA.
+You are SERAPHIN, the SERA Trust Domestic Violence Information Assistant for Georgia.
+Provide ONLY general information (not legal advice). 
+Remain calm, trauma-informed, supportive, and factual.
 """.strip()
 
 
@@ -51,14 +51,14 @@ def answer_question(question: str, retriever, llm) -> str:
 
     if not docs:
         user_msg = HumanMessage(
-            content=f"No context found. Give general DV info (not legal advice) for:\n\n{question}"
+            content=f"No context found. Provide general Georgia DV info for:\n\n{question}"
         )
         return llm.invoke([system_msg, user_msg]).content
 
     context = format_context(docs)
     user_prompt = f"""
 Use this context to answer the question. If context is not enough, say so and
-then give general guidance and next steps only.
+offer general guidance and safe next steps only.
 
 Context:
 {context}
@@ -72,15 +72,15 @@ Question:
 
 def main():
     st.set_page_config(
-        page_title="SERA Serenity Assistant",
+        page_title="SERAPHIN – SERA DV Assistant",
         page_icon="💜",
         layout="centered",
     )
 
-    st.title("💜 Serenity – DV Information Assistant (Georgia)")
+    st.title("💜 SERAPHIN – SERA Domestic Violence Information Assistant")
     st.write(
-        "This tool provides **general information only** about domestic violence "
-        "laws and options in Georgia. It is **not legal advice**."
+        "SERAPHIN provides **general information only** about domestic violence "
+        "laws and processes in Georgia. This is **not legal advice**."
     )
 
     retriever, llm = load_retriever_and_llm()
@@ -89,23 +89,23 @@ def main():
         st.session_state.history = []
 
     question = st.text_input(
-        "Ask a question:",
+        "Ask SERAPHIN a question:",
         placeholder="Example: How do I apply for a Temporary Protective Order (TPO) in Fulton County?",
     )
 
     if st.button("Submit") and question.strip():
-        with st.spinner("Thinking..."):
+        with st.spinner("SERAPHIN is thinking..."):
             answer = answer_question(question.strip(), retriever, llm)
         st.session_state.history.append((question.strip(), answer))
 
     st.markdown("---")
     for q, a in reversed(st.session_state.history):
         st.markdown(f"**You:** {q}")
-        st.markdown(f"**Assistant:** {a}")
+        st.markdown(f"**Seraphin:** {a}")
         st.markdown("---")
 
     st.caption(
-        "Disclaimer: This assistant gives general information only and does not replace a lawyer, "
+        "Disclaimer: SERAPHIN gives general information only. It does not replace a lawyer, "
         "police, or certified DV advocate. If you are in immediate danger, call 911."
     )
 
