@@ -1,8 +1,26 @@
+# Web framework for the Streamlit UI
+streamlit
+
+# LangChain core + community components
+langchain
+langchain-community
+
+# Groq LLM integration
+langchain-groq
+
+# HuggingFace embeddings
+langchain-huggingface
+
+# Chroma vector store
+langchain-chroma
+chromadb
+
+# Env variables
+python-dotenv
+
+# PDF loading (used in ingest.py)
+pypdf
+
+# (Optional) FastAPI + uvicorn if you still use api.py locally
 fastapi
 uvicorn[standard]
-langchain
-langchain-openai
-langchain-community
-chromadb
-python-dotenv
-pypdf
