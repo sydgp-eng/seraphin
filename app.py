@@ -10,110 +10,138 @@ from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
-from langchain_chroma import Chroma  # pip install langchain-chroma
+from langchain_chroma import Chroma
 
-# ----------------- Constants -----------------
 
 DB_DIR = "chroma_db"
-MODEL_NAME = "llama-3.1-8b-instant"
+MODEL_NAME = "llama-3.1-8b-instant"   # Groq production model
+# or, if you want a bigger model:
+# MODEL_NAME = "llama-3.3-70b-versatile"
 TEMPERATURE = 0.1
 
 SYSTEM_PROMPT = """
 You are SERAPHIN, the SERA Trust Domestic Violence Information Assistant for Georgia.
-Provide ONLY general information (not legal advice).
-Remain calm, trauma-informed, supportive, and factual.
+
+Your role:
+- Provide ONLY general information (not legal advice).
+- Be calm, trauma-informed, supportive, and factual.
+- Encourage users to contact licensed attorneys, law enforcement, or certified DV advocates for case-specific advice.
+- If user appears to be in immediate danger, advise them to contact 911 or local emergency services.
+
+You must NOT:
+- Give legal advice.
+- Tell users what decision to make.
+- Draft legal documents or filings.
 """.strip()
-
-
-# ----------------- Helpers -----------------
-
-def get_groq_api_key() -> str | None:
-    """
-    Try to get GROQ_API_KEY from:
-    1) Local .env (for local dev)
-    2) Streamlit Cloud secrets (for deployed app)
-    """
-    load_dotenv()  # loads .env if present
-
-    # 1) Environment variable (local dev)
-    api_key = os.getenv("GROQ_API_KEY")
-
-    # 2) Streamlit secrets (Streamlit Cloud)
-    if not api_key:
-        try:
-            if "GROQ_API_KEY" in st.secrets:
-                api_key = st.secrets["GROQ_API_KEY"]
-        except Exception:
-            # st.secrets might not be available in some contexts
-            api_key = None
-
-    return api_key
 
 
 @st.cache_resource
 def load_retriever_and_llm():
-    """Create the Chroma retriever and Groq LLM, cached by Streamlit."""
-    api_key = get_groq_api_key()
+    """Load embeddings, Chroma retriever, and Groq LLM (cached across sessions)."""
+    load_dotenv()
+
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "GROQ_API_KEY is missing. "
-            "Set it in a local .env file OR in Streamlit Cloud Secrets."
-        )
+        raise RuntimeError("❌ GROQ_API_KEY missing from environment variables")
 
-    # Make sure ChatGroq can see the key via env var as well
-    os.environ["GROQ_API_KEY"] = api_key
-
-    # Embeddings + Chroma DB
     embeddings = HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
-    db = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 
-    # Groq LLM
+    db = Chroma(
+        persist_directory=DB_DIR,
+        embedding_function=embeddings,
+    )
+
+    retriever = db.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 4},
+    )
+
     llm = ChatGroq(
         model=MODEL_NAME,
         temperature=TEMPERATURE,
-        api_key=api_key,  # explicit, in case env var not picked up
     )
 
     return retriever, llm
 
 
 def format_context(docs: List[Document]) -> str:
-    """Join retrieved chunks into a single context string."""
-    return "\n\n".join(d.page_content.strip() for d in docs)
+    """Join retrieved document snippets into a single context string."""
+    return "\n\n".join(d.page_content.strip() for d in docs if d.page_content.strip())
 
 
 def answer_question(question: str, retriever, llm) -> str:
-    """RAG pipeline: retrieve, then ask Groq with a grounded prompt."""
+    """RAG-style answer: retrieve context and call the LLM."""
     docs = retriever.invoke(question)
     system_msg = SystemMessage(content=SYSTEM_PROMPT)
 
-    # No documents found – fall back to generic info
+    # No context – fall back to generic Georgia DV information
     if not docs:
         user_msg = HumanMessage(
-            content=f"No context found. Provide general Georgia DV info for:\n\n{question}"
+            content=f"No context found. Provide only general Georgia domestic violence information for:\n\n{question}"
         )
         return llm.invoke([system_msg, user_msg]).content
 
     context = format_context(docs)
-    user_prompt = f"""
-Use this context to answer the question. If the context is not enough, say so and
-offer ONLY general guidance and safe next steps. Do NOT give legal advice.
+    prompt = f"""
+You are SERAPHIN, the SERA Trust Domestic Violence Information Assistant for Georgia.
+
+Use the context below to answer the user's question.
+- If the context is weak, say that it may not fully match their situation and give only high-level guidance.
+- Do NOT give legal advice.
+- Do NOT make promises about outcomes.
+- Suggest contacting a Georgia attorney or certified DV advocate for specific next steps.
 
 Context:
 {context}
 
-Question:
+User Question:
 {question}
 """.strip()
 
-    user_msg = HumanMessage(content=user_prompt)
-    return llm.invoke([system_msg, user_msg]).content
+    user_msg = HumanMessage(content=prompt)
+    response = llm.invoke([system_msg, user_msg])
+    return response.content
 
 
-# ----------------- Streamlit UI -----------------
+def add_custom_styles():
+    """Light styling for a calmer, more pleasant UI."""
+    st.markdown(
+        """
+        <style>
+        /* Overall page background */
+        .stApp {
+            background: #f7f3fb;
+        }
+
+        /* Chat bubbles */
+        .user-bubble {
+            background-color: #e7e3ff;
+            padding: 0.75rem 1rem;
+            border-radius: 1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .bot-bubble {
+            background-color: #ffffff;
+            padding: 0.75rem 1rem;
+            border-radius: 1rem;
+            border: 1px solid #e4d9ff;
+            margin-bottom: 0.75rem;
+        }
+
+        .role-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            opacity: 0.7;
+            margin-bottom: 0.15rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def main():
     st.set_page_config(
@@ -122,54 +150,79 @@ def main():
         layout="centered",
     )
 
+    add_custom_styles()
+
+    # Sidebar info
+    with st.sidebar:
+        st.markdown("### 💜 SERAPHIN – Info")
+        st.write(
+            "SERAPHIN is an informational assistant created by **SERA Trust** "
+            "to help explain domestic violence processes and resources in Georgia."
+        )
+        st.markdown(
+            "**Important:** SERAPHIN does **not** replace:\n"
+            "- A licensed attorney\n"
+            "- Police or emergency services\n"
+            "- A certified domestic violence advocate"
+        )
+
     st.title("💜 SERAPHIN – SERA Domestic Violence Information Assistant")
     st.write(
-        "SERAPHIN provides **general information only** about domestic violence "
-        "laws and processes in Georgia. This is **not legal advice**."
+        "SERAPHIN provides **general information only** about domestic violence laws and "
+        "processes in **Georgia (USA)**.\n\n"
+        "It cannot give legal advice or tell you what to do in your specific case."
     )
 
-    # Load retriever + LLM with nice error handling
-    try:
-        retriever, llm = load_retriever_and_llm()
-    except Exception as e:
-        st.error(
-            "SERAPHIN could not start because of a configuration problem.\n\n"
-            f"Details: {e}"
-        )
-        st.stop()
+    st.info(
+        "If you are in **immediate danger**, please call **911** or your local emergency number. "
+        "For confidential support, you may also contact a certified domestic violence hotline or shelter."
+    )
+
+    retriever, llm = load_retriever_and_llm()
 
     if "history" not in st.session_state:
+        # Each item: {"role": "user"/"assistant", "content": str}
         st.session_state.history = []
 
-    question = st.text_input(
-        "Ask SERAPHIN a question:",
-        placeholder="Example: How do I apply for a Temporary Protective Order (TPO) in Fulton County?",
+    # Display chat history
+    for message in st.session_state.history:
+        role = message["role"]
+        content = message["content"]
+
+        if role == "user":
+            with st.container():
+                st.markdown('<div class="role-label">You</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="user-bubble">{content}</div>', unsafe_allow_html=True)
+        else:
+            with st.container():
+                st.markdown('<div class="role-label">SERAPHIN</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="bot-bubble">{content}</div>', unsafe_allow_html=True)
+
+    # Chat input
+    user_input = st.chat_input(
+        "Ask SERAPHIN a question (example: “How do I apply for a TPO in Fulton County?”)"
     )
 
-    if st.button("Submit") and question.strip():
-        with st.spinner("SERAPHIN is thinking..."):
-            try:
-                answer = answer_question(question.strip(), retriever, llm)
-            except Exception:
-                # Hide raw stack trace from users
-                st.error(
-                    "SERAPHIN ran into a technical problem while answering. "
-                    "Please try again in a moment."
-                )
-            else:
-                st.session_state.history.append((question.strip(), answer))
+    if user_input and user_input.strip():
+        question = user_input.strip()
+        # Add user message to history
+        st.session_state.history.append({"role": "user", "content": question})
 
-    # ---- Conversation history ----
+        try:
+            with st.spinner("SERAPHIN is thinking..."):
+                answer = answer_question(question, retriever, llm)
+            st.session_state.history.append({"role": "assistant", "content": answer})
+            st.rerun()
+        except Exception as e:
+            st.error("SERAPHIN ran into a technical problem. Please try again in a moment.")
+            # You can comment this out in production if you prefer not to expose stack traces
+            st.exception(e)
+
     st.markdown("---")
-    for q, a in reversed(st.session_state.history):
-        st.markdown(f"**You:** {q}")
-        st.markdown(f"**Seraphin:** {a}")
-        st.markdown("---")
-
-    # ---- Footer ----
     st.caption(
-        "Disclaimer: SERAPHIN gives general information only. It does not replace a lawyer, "
-        "police, or certified domestic violence advocate. If you are in immediate danger, call 911."
+        "Disclaimer: SERAPHIN provides general information only and does **not** create an "
+        "attorney–client relationship. For legal advice, please contact a licensed Georgia attorney. "
+        "If you are in immediate danger, call 911."
     )
 
 
