@@ -1,7 +1,7 @@
 # app.py – SERAPHIN (SERA DV Assistant UI)
 
 import os
-from typing import List
+from typing import List, Optional
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -14,9 +14,7 @@ from langchain_chroma import Chroma
 
 
 DB_DIR = "chroma_db"
-MODEL_NAME = "llama-3.1-8b-instant"   # Groq production model
-# or, if you want a bigger model:
-# MODEL_NAME = "llama-3.3-70b-versatile"
+MODEL_NAME = "llama-3.1-8b-instant"  # Groq model
 TEMPERATURE = 0.1
 
 SYSTEM_PROMPT = """
@@ -26,7 +24,7 @@ Your role:
 - Provide ONLY general information (not legal advice).
 - Be calm, trauma-informed, supportive, and factual.
 - Encourage users to contact licensed attorneys, law enforcement, or certified DV advocates for case-specific advice.
-- If user appears to be in immediate danger, advise them to contact 911 or local emergency services.
+- If the user appears to be in immediate danger, advise them to contact 911 or local emergency services.
 
 You must NOT:
 - Give legal advice.
@@ -37,26 +35,39 @@ You must NOT:
 
 @st.cache_resource
 def load_retriever_and_llm():
-    """Load embeddings, Chroma retriever, and Groq LLM (cached across sessions)."""
+    """Load (or fallback) retriever + Groq LLM, cached across sessions."""
     load_dotenv()
+
+    # Make sure GROQ_API_KEY is available both locally and on Streamlit Cloud
+    if "GROQ_API_KEY" in st.secrets:
+        os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise RuntimeError("❌ GROQ_API_KEY missing from environment variables")
+        raise RuntimeError("❌ GROQ_API_KEY missing. Set it in .env (local) or Streamlit Secrets (cloud).")
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    retriever: Optional[object] = None
 
-    db = Chroma(
-        persist_directory=DB_DIR,
-        embedding_function=embeddings,
-    )
+    # Try to load sentence-transformer embeddings.
+    # If this fails (e.g., ImportError on cloud), we gracefully fall back to LLM-only mode.
+    try:
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
 
-    retriever = db.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 4},
-    )
+        db = Chroma(
+            persist_directory=DB_DIR,
+            embedding_function=embeddings,
+        )
+
+        retriever = db.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 4},
+        )
+    except ImportError:
+        # Embeddings not available in this environment – run without RAG.
+        # We do NOT crash; SERAPHIN will still provide general DV information.
+        retriever = None
 
     llm = ChatGroq(
         model=MODEL_NAME,
@@ -72,17 +83,30 @@ def format_context(docs: List[Document]) -> str:
 
 
 def answer_question(question: str, retriever, llm) -> str:
-    """RAG-style answer: retrieve context and call the LLM."""
-    docs = retriever.invoke(question)
+    """Answer using RAG if retriever is available, otherwise LLM-only."""
     system_msg = SystemMessage(content=SYSTEM_PROMPT)
 
-    # No context – fall back to generic Georgia DV information
+    docs: List[Document] = []
+
+    if retriever is not None:
+        try:
+            docs = retriever.invoke(question)
+        except Exception:
+            # If retrieval breaks for any reason, fall back to LLM-only.
+            docs = []
+
+    # No context available → general Georgia DV guidance
     if not docs:
         user_msg = HumanMessage(
-            content=f"No context found. Provide only general Georgia domestic violence information for:\n\n{question}"
+            content=(
+                "Provide general domestic violence information for Georgia to help answer "
+                "the following question. Do NOT give legal advice, only high-level information.\n\n"
+                f"Question: {question}"
+            )
         )
         return llm.invoke([system_msg, user_msg]).content
 
+    # We have context from Chroma → use RAG
     context = format_context(docs)
     prompt = f"""
 You are SERAPHIN, the SERA Trust Domestic Violence Information Assistant for Georgia.
@@ -110,32 +134,37 @@ def add_custom_styles():
     st.markdown(
         """
         <style>
-        /* Overall page background */
         .stApp {
-            background: #f7f3fb;
+            background: #121219;
         }
 
-        /* Chat bubbles */
         .user-bubble {
-            background-color: #e7e3ff;
-            padding: 0.75rem 1rem;
+            background-color: #2a2438;
+            padding: 0.9rem 1.2rem;
             border-radius: 1rem;
-            margin-bottom: 0.25rem;
+            color: #f5f0ff;
+            font-size: 1rem;
+            line-height: 1.5;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
         }
 
         .bot-bubble {
-            background-color: #ffffff;
-            padding: 0.75rem 1rem;
+            background-color: #1e1b29;
+            padding: 0.9rem 1.2rem;
             border-radius: 1rem;
-            border: 1px solid #e4d9ff;
-            margin-bottom: 0.75rem;
+            border: 1px solid #4b3f8f;
+            color: #f5f0ff;
+            font-size: 1rem;
+            line-height: 1.6;
+            margin-bottom: 0.8rem;
         }
 
         .role-label {
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-weight: 600;
-            opacity: 0.7;
-            margin-bottom: 0.15rem;
+            color: #ba9cff;
+            margin-bottom: 0.2rem;
         }
         </style>
         """,
@@ -180,11 +209,17 @@ def main():
 
     retriever, llm = load_retriever_and_llm()
 
+    # Show a small note if retriever is disabled in this environment
+    if retriever is None:
+        st.warning(
+            "Search over SERA’s legal documents is temporarily unavailable in this environment. "
+            "SERAPHIN will answer using general Georgia domestic violence information only."
+        )
+
     if "history" not in st.session_state:
-        # Each item: {"role": "user"/"assistant", "content": str}
         st.session_state.history = []
 
-    # Display chat history
+    # Render chat history
     for message in st.session_state.history:
         role = message["role"]
         content = message["content"]
@@ -205,7 +240,6 @@ def main():
 
     if user_input and user_input.strip():
         question = user_input.strip()
-        # Add user message to history
         st.session_state.history.append({"role": "user", "content": question})
 
         try:
@@ -215,7 +249,6 @@ def main():
             st.rerun()
         except Exception as e:
             st.error("SERAPHIN ran into a technical problem. Please try again in a moment.")
-            # You can comment this out in production if you prefer not to expose stack traces
             st.exception(e)
 
     st.markdown("---")
